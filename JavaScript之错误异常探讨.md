@@ -1,10 +1,10 @@
-# JavaScript 之错误异常处理
+# JavaScript 之错误异常探讨
 
 > 我的建议是不要隐藏错误，勇敢地抛出来。没有人会因为代码出现 bug 导致程序崩溃而羞耻，我们可以让程序中断，让用户重来。错误是无法避免的，如何去处理它才是最重要的。
 
-JavaScript 提供一套异常处理机制，异常是干扰程序正常流程的非正常的事故。而没人可以保持程序没有 bug，那么上线后遇到特殊的 bug，如何更快的定位问题所在呢？这就是我们这个专题需要讨论的问题。
+JavaScript 提供一套错误处理机制，错误是干扰程序正常流程的非正常的事故。而没人可以保持程序没有 bug，那么上线后遇到特殊的 bug，如何更快的定位问题所在呢？这就是我们这个专题需要讨论的问题。
 
-下面会从 JavaScript Error 基础知识、如何捕获异常、如何方便的在线上报错误等方面来叙述，本人也是根据网上的知识点进行了一些总结和分析（我只是互联网的搬运工，不是创造者），如果有什么错漏的情况，请在 issue 上狠狠的批评我。
+下面会从 JavaScript Error 基础知识、如何拦截和捕获异常、如何方便的在线上报错误等方面来叙述，本人也是根据网上的知识点进行了一些总结和分析（我只是互联网的搬运工，不是创造者），如果有什么错漏的情况，请在 issue 上狠狠的批评我。
 
 **这个专题目前是针对浏览器的，还没考虑到 node.js**，不过都是 JavaScript Es6 语法，大同小异。
 
@@ -17,12 +17,12 @@ JavaScript 提供一套异常处理机制，异常是干扰程序正常流程的
 
 ### JavaScript 引擎自动抛出的错误
 
-大多数场景下我们遇到的错误都是这个错误。这个很好理解，Javscript 语法错误、代码调用顺序问题、类型问题等，JavaScript 引擎就会自动触发此类错误。如下一些场景：
+大多数场景下我们遇到的错误都是这类错误。如果发生 Javscript 语法错误、代码引用错误、类型错误等，JavaScript 引擎就会自动触发此类错误。如下一些场景：
 
 - 场景一
 
   ```js
-  console.log(a.notExited)
+  console.log(a.notExited);
   // 浏览器会抛出 Uncaught ReferenceError: a is not defined
   ```
 
@@ -33,33 +33,33 @@ JavaScript 提供一套异常处理机制，异常是干扰程序正常流程的
   // 浏览器抛出 Uncaught SyntaxError: Missing initializer in const declaration
   ```
 
-    语法错误一般直接浏览器第一时间就抛出错误，不会等到执行的时候才会报错。a
+  语法错误，浏览器一般第一时间就抛出错误，不会等到执行的时候才会报错。
 
 - 场景三
 
   ```js
   let data;
-  data.forEach(v=>{})
+  data.forEach(v => {});
   // Uncaught TypeError: Cannot read property 'forEach' of undefined
   ```
 
 ### 手动抛出的错误
 
-一般都是类库开发的自定义异常（如参数等不合法的异常抛出）。或者重新修改错误 message 的情况进行上报，以方便理解。
+一般都是类库开发的自定义错误异常（如参数等不合法的错误异常抛出）。或者重新修改错误 message 进行上报，以方便理解。
 
 - 场景一
 
   ```js
-  function sum(a,b){
-    if(typeof a !== 'number') {
+  function sum(a, b) {
+    if (typeof a !== 'number') {
       throw TypeError('Expected a to be a number.');
     }
-    if(typeof b !== 'number') {
+    if (typeof b !== 'number') {
       throw TypeError('Expected b to be a number.');
     }
     return a + b;
   }
-  sum(3,'d');
+  sum(3, 'd');
   // 浏览器抛出 uncaught TypeError: Expected b to be a number.
   ```
 
@@ -69,7 +69,7 @@ JavaScript 提供一套异常处理机制，异常是干扰程序正常流程的
 
   ```js
   let data;
-  
+
   try {
     data.forEach(v => {});
   } catch (error) {
@@ -87,24 +87,24 @@ JavaScript 提供一套异常处理机制，异常是干扰程序正常流程的
 new Error([message[,fileName,lineNumber]])
 ```
 
-省略 `new ` 语法也一样。
+省略 `new` 语法也一样。
 
 其中`fileName` 和 `lineNumber` 不是所有浏览器都兼容的，谷歌也不支持，所以可以忽略。
 
-`Error` 构造函数是通用错误类型，还有 `TypeError`、`RangeError` 等类型。
+`Error` 构造函数是通用错误类型，除了 `Error` 类型，还有 `TypeError`、`RangeError` 等类型。
 
-### Error 实例
+## Error 实例
 
-这里列举的都是 Error 层的原型链，更深层的原型链的继承属性和方便不做说明。一些有兼容性的而且不常用的属性和方法不做说明。
+这里列举的都是 Error 层的原型链属性和方法，更深层的原型链的继承属性和方便不做说明。一些有兼容性的而且不常用的属性和方法不做说明。
 
 ```js
-console.log(Error.prototype)
+console.log(Error.prototype);
 // 浏览器输出 {constructor: ƒ, name: "Error", message: "", toString: ƒ}
 ```
 
 其他错误类型构造函数是继承 `Error`，实例是一致的。
 
-#### 属性
+### 属性
 
 - Error.prototype.message
 
@@ -114,26 +114,30 @@ console.log(Error.prototype)
 
   错误类型(名字)， `Error("msg").name === "Error”`。如果是 TypeError，那么 name 为 TypeError。
 
-#### 方法
+- Error.prototype.stack
+
+  [`Error`](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Error) 对象作为一个非标准的栈属性提供了一种函数追踪方式。无论这个函数被被调用，处于什么模式，来自于哪一行或者哪个文件，有着什么样的参数。这个栈产生于最近一次调用最早的那次调用，返回原始的全局作用域调用。
+
+  这个不是规范，存在兼容性。经测试，谷歌、火狐、Edge、safar 都支持此特性(都是在最新的版本下测试 2019-04-02)，IE 不支持。
+
+### 方法
 
 - Error.prototype.constructor
 
-  这个不用说明了，必然有一个构造函数。
-
 - Error.prototype.toString
 
-  返回值跟 Error.prototype.name 一致。
+  返回值格式为 `${name}: ${message}`。
 
-## Error 类型
+## 常用 Error 类型
 
-除了通用的 `Error` 构造函数外，JavaScript还有常见的 5 个其他类型的错误构造函数。
+除了通用的 `Error` 构造函数外，JavaScript 还有常见的 5 个其他类型的错误构造函数。
 
 ### TypeError
 
 创建一个 Error 实例，表示错误的原因：**变量或参数不属于有效类型**。
 
 ```js
-throw TypeError("类型错误");
+throw TypeError('类型错误');
 // Uncaught TypeError: 类型错误
 ```
 
@@ -142,7 +146,7 @@ throw TypeError("类型错误");
 创建一个 `Error` 实例，表示错误的原因：**数值变量或参数超出其有效范围**。
 
 ```js
-throw RangeError("数值超出有效范围");
+throw RangeError('数值超出有效范围');
 // Uncaught RangeError: 数值超出有效范围
 ```
 
@@ -151,7 +155,7 @@ throw RangeError("数值超出有效范围");
 创建一个 `Error` 实例，表示错误的原因：**无效引用**。
 
 ```js
-throw ReferenceError("无效引用");
+throw ReferenceError('无效引用');
 // Uncaught ReferenceError: 无效引用
 ```
 
@@ -160,7 +164,7 @@ throw ReferenceError("无效引用");
 创建一个 `Error` 实例，表示错误的原因：**语法错误**。这种场景很少用，除非类库定义了新语法(如模板语法)。
 
 ```js
-throw SyntaxError("语法错误");
+throw SyntaxError('语法错误');
 // Uncaught SyntaxError: 语法错误
 ```
 
@@ -169,7 +173,7 @@ throw SyntaxError("语法错误");
 创建一个 `Error` 实例，表示错误的原因：**涉及到 uri 相关的错误**。
 
 ```js
-throw URIError("url 不合法");
+throw URIError('url 不合法');
 // Uncaught RangeError: url 不合法
 ```
 
@@ -178,9 +182,9 @@ throw URIError("url 不合法");
 自定义新的 Error 类型需要继承 Error ，如下自定义 `CustomError`：
 
 ```js
-function CustomError(...args){
+function CustomError(...args) {
   class InnerCustomError extends Error {
-    name = "CustomError";
+    name = 'CustomError';
   }
   return new InnerCustomError(...args);
 }
@@ -189,8 +193,6 @@ function CustomError(...args){
 继承 Error 后，我们只需要对 `name` 做重写，然后封装成可直接调用的函数即可。
 
 ## 如何拦截 JavaScript 错误？
-
-**拦截并非单纯的获取。**
 
 既然没人能保证 web 应用不会出现 bug，那么出现异常报错时，如何拦截并进行一些操作呢？
 
@@ -201,9 +203,9 @@ function CustomError(...args){
 ```js
 const { data } = this.props;
 try {
-  data.forEach(d=>{});
+  data.forEach(d => {});
   // 如果 data 不是数组就会报错
-} catch(err){
+} catch (err) {
   console.error(err);
   // 这里可以做上报处理等操作
 }
@@ -219,7 +221,9 @@ try {
 function badHandler(fn) {
   try {
     return fn();
-  } catch (err) { /**noop，不做任何处理**/ }
+  } catch (err) {
+    /**noop，不做任何处理**/
+  }
   return null;
 }
 badHandler();
@@ -230,16 +234,16 @@ badHandler();
 ##### 相对友好但糟糕的处理方式
 
 ```js
-function CustomError(...args){
+function CustomError(...args) {
   class InnerCustomError extends Error {
-    name = "CustomError";
+    name = 'CustomError';
   }
   return new InnerCustomError(...args);
 }
 function uglyHandlerImproved(fn) {
   try {
     return fn();
-  } catch (err) { 
+  } catch (err) {
     throw new CustomError(err.message);
   }
   return null;
@@ -316,14 +320,16 @@ badHandler();
 
 ### Promise 错误拦截
 
-`Promise.prototype.catch` 可以达到 try…catch 一样的效果，只要是在 Promise 相关的处理中报错，都会被 catch 到。当然如果你在相关回调函数中 try…catch，然后做了静默提示，那么也是 catch  不到的。
+`Promise.prototype.catch` 可以达到 try…catch 一样的效果，只要是在 Promise 相关的处理中报错，都会被 catch 到。当然如果你在相关回调函数中 try…catch，然后做了静默提示，那么也是 catch 不到的。
 
 如下会被 catch 到：
 
 ```js
 new Promise(resolve => {
   data.forEach(v => {});
-}).catch(err=>{/*这里会运行*/})
+}).catch(err => {
+  /*这里会运行*/
+});
 ```
 
 下面的不会被 catch 到：
@@ -331,9 +337,11 @@ new Promise(resolve => {
 ```js
 new Promise(resolve => {
   try {
-  	data.forEach(v => {});
-  }catch(err){}
-}).catch(err=>{/*这里不会运行*/})
+    data.forEach(v => {});
+  } catch (err) {}
+}).catch(err => {
+  /*这里不会运行*/
+});
 ```
 
 Promise 错误拦截，这里就不详细说了，如果你看懂了 try…catch，这个也很好理解。
@@ -404,7 +412,7 @@ unhandledrejection 存在兼容性问题，IE、Edge、火狐等目前都不支�
 用法如下：
 
 ```js
-window.addEventListener("unhandledrejection", event => {
+window.addEventListener('unhandledrejection', event => {
   console.warn(`UNHANDLED PROMISE REJECTION: ${event.reason}`);
 });
 ```
@@ -433,11 +441,11 @@ window.onunhandledrejection = event => {
 
 - stack
 
-  这个不是规范，存在兼容性。经测试，谷歌、火狐、Edge、safar 都支持此特性(都是在最新的版本下测试 2019-04-2)，IE 不支持。
+  这个不是规范，存在兼容性。经测试，谷歌、火狐、Edge、safar 都支持此特性(都是在最新的版本下测试 2019-04-02)，IE 不支持。
 
 `name` 和 `message` 我们都不用做什么处理，主要是要针对 stack 做处理，一般我们需要把，这三个字段的信息提交到错误处理系统，针对性处理。
 
-同时我们显示的代码是被压缩后的代码，需要使用 sourceMap 进行映射还原代码。
+同时我们生成环境的代码是被压缩后的代码，需要使用 sourceMap 进行映射还原代码。
 
 **后续会补充这个讨论**。
 
