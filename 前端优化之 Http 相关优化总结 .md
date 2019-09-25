@@ -68,6 +68,8 @@ dns 解析也是需要时间的，特别在移动端的时候更明显，我们�
 
 通过 `preload` 一般是预加载**当前页面**要用到的图片、字体、js 脚本、css 文件等静态资源文件。
 
+详细用法，看[这里](https://developer.mozilla.org/zh-CN/docs/Web/HTML/Preloading_content)。
+
 ##### 场景一
 
 如果需要，你可以完全以脚本化的方式来执行这些预加载操作。例如，我们在这里创建一个[`HTMLLinkElement`](https://developer.mozilla.org/zh-CN/docs/Web/API/HTMLLinkElement) 实例，然后将他们附加到 DOM 上：
@@ -111,8 +113,17 @@ document.body.appendChild(preloadedScript);
 
 我们加上：
 
+一个有趣的情况是，如果你需要获取的是字体文件，那么即使是非跨域的情况下，也需要应用这一属性 **crossorigin**，否则的话这个字体会加载两次（如果样式使用到字体）。
+
+**as="font"** 也必须加上，否则不会预加载，这里也说明了 as 需要根据资源类型填写。
+
 ```html
-<link rel="preload" href="./static/font/Test-Number-Medium.otf">
+<link 
+  rel="preload" 
+  href="./static/font/Test-Number-Medium.otf"
+  as="font"
+  crossorigin="anonymous"
+>
 ```
 
 就可以提交加载，节省大部分甚至全部的字体加载时间，一般都是全部的时间，因为 JS 资源文件比字体大多了（**并行下载，最长的资源加载时间，决定了最大加载时间**）。

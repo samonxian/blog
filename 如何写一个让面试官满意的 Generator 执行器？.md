@@ -52,7 +52,13 @@ gen.next(nextOne.value)
 
 ### 原理三
 
-`gen.throw(exception)` 可以抛出异常，而且该异常通常可以通过 `try...catch` 块进行捕获。那么我们可以抛出 Promise 错误，这样就可以使用 `try catch` 拦截 Promise 的错误了。
+`gen.throw(exception)` 可以抛出异常，并恢复生成器的执行，返回带有 done 及 value 两个属性的对象。而且该异常通常可以通过 `try...catch` 块进行捕获。那么我们可以抛出 Promise 错误，这样就可以使用 `try catch` 拦截 Promise 的错误了。
+
+不过需要注意一点：
+
+**`gen.throw()` 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要。不过 `gen.throw()` 在异步 Promise 环境中抛出才会有返回值， 同时只要 generator 函数中 try catch yield 语句就可以捕获 `gen.throw` 出来的错误。**
+
+所以需要确保把所有 `gen.throw()` 都包装在一个 Promise 执行环境中才会生效。
 
 ## 简单的执行器
 
@@ -103,31 +109,134 @@ generatorExecuter(test)
 ```js
 /**
  * generator 执行器
- * @param {Function} func generator 函数
+ * @param {GeneratorFunction} generatorFunc generator 函数
  * @return {Promise} 返回一个 Promise 对象
  */
-function generatorExecuter(func) {
-  const gen = func()
-
-  function recursion(prevValue) {
-    const next = gen.next(prevValue)
-    const value = next.value
-    const done = next.done
-    if (done) {
-      return Promise.resolve(value)
-    } else {
-      return Promise.resolve(value).then(finalValue => {
-        return recursion(finalValue)
-      })
+function generatorExecuter(generatorFunc) {
+  return new Promise((resolve) => {
+    const generator = generatorFunc()
+    // 触发第一次执行下面定义的 next 函数
+    onFullfilled()
+    
+    /**
+     * Promise 成功处理的回调函数
+     * 回调函数会执行 generator.next()
+     * @param {Any} value yield 表达式的返回值
+     */
+    function onFullfilled(value) {
+      let result
+      // next() 会一步一步的执行 generator 函数体的代码，
+      result = generator.next(value)
+      next(result)
     }
-  }
-  return recursion()
+    
+    function next(result) {
+      const value = result.value
+      const done = result.done
+
+      if (done) {
+        return resolve(value)
+      } else {
+        return Promise.resolve(value).then(onFullfilled)
+      }
+    }
+  })
 }
 ```
 
 这样就再运行 generatorExecuter(test) 就没问题了。
 
-## 考虑 yield 的类型是 Generator 函数
+## 考虑 try catch 捕获 yield 错误
+
+这里用到了上面提到的**原理三**，如果不清楚可以回去看看。
+
+如下代码，使用上面的执行器是无法 try catch 到 yield 错误的:
+
+```js
+function* test() {
+  try {
+    const a = yield Promise.reject('error')
+  }catch (err) {
+    console.log('发生错误了：', err)
+  }
+  return true
+}
+generatorExecuter(test)
+```
+
+运行上面代码后，会报错 `Uncaught (in promise) error`，而不是拦截后输出 `发生错误了： error`。
+
+要改成这样才行（使用 gen.throw ）：
+
+```js 
+/**
+ * generator 执行器
+ * @param {GeneratorFunction} generatorFunc generator 函数
+ * @return {Promise} 返回一个 Promise 对象
+ */
+function generatorExecuter(generatorFunc) {
+  return new Promise((resolve, reject) => {
+    const generator = generatorFunc()
+    // 触发第一次执行下面定义的 next 函数
+    onFullfilled()
+    /**
+     * Promise 成功处理的回调函数
+     * 回调函数会执行 generator.next()
+     * @param {Any} value yield 表达式的返回值
+     */
+    function onFullfilled(value) {
+      let result
+      // next() 会一步一步的执行 generator 函数体的代码，
+      // 如果报错，我们需要拦截，然后 reject
+      try {
+        // yield 表达式本身没有返回值，或者说总是返回 undefined。
+        // generator.next 方法可以带一个参数，该参数就会被当作上一个 yield 表达式的返回值。
+        // 由于 generator.next 方法的参数表示上一个 yield 表达式的返回值，
+        // 所以在第一次使用 generator.next 方法时，传递参数是无效的。
+        result = generator.next(value)
+      } catch (error) {
+        return reject(error)
+      }
+      next(result)
+    }
+    /**
+     * Promise 失败处理的回调函数
+     * 回调函数会执行 generator.throw() ,这样可以 try catch 拦截 yield xxx 的错误
+     * @param {Any} reason 失败原因
+     */
+    function onRejected(reason) {
+      let result
+      try {
+        // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
+        // 返回带有 done 及 value 两个属性的对象。
+        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
+        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
+        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
+        result = generator.throw(reason)
+      } catch (error) {
+        return reject(error)
+      }
+      // gen.throw() 的错误被捕获后，可以继续执行下去
+      next(result)
+    }
+
+    function next(result) {
+      const value = result.value
+      const done = result.done
+
+      if (done) {
+        return resolve(value)
+      } else {
+        return Promise.resolve(value).then(onFullfilled, onRejected)
+      }
+    }
+  })
+}
+```
+
+## 考虑 yield 的其他类型
+
+考虑 yield 的其他类型，如 generator 函数，**可以把这些类型适配为 Promise 就很好处理了**。
 
 上面的代码执行如下的 Generator 函数是不正确的：
 
@@ -156,6 +265,94 @@ generatorExecuter(test)
 
 ```js
 /**
+ * generator 执行器
+ * @param {GeneratorFunction | Generator} generatorFunc Generator 函数或者 Generator
+ * @return {Promise} 返回一个 Promise 对象
+ */
+function generatorExecuter(generatorFunc) {
+  if (!isGernerator(generatorFunc) && !isGerneratorFunction(generatorFunc)) {
+    throw new TypeError(
+      'Expected the generatorFunc to be a GeneratorFunction or a Generator.'
+    )
+  }
+
+  let generator = generatorFunc
+  if (isGerneratorFunction(generatorFunc)) {
+    generator = generatorFunc()
+  }
+
+  return new Promise((resolve, reject) => {
+    // 触发第一次执行下面定义的 next 函数
+    onFullfilled()
+    /**
+     * Promise 成功处理的回调函数
+     * 回调函数会执行 generator.next()
+     * @param {Any} value yield 表达式的返回值
+     */
+    function onFullfilled(value) {
+      let result
+      // next() 会一步一步的执行 generator 函数体的代码，
+      // 如果报错，我们需要拦截，然后 reject
+      try {
+        // yield 表达式本身没有返回值，或者说总是返回 undefined。
+        // generator.next 方法可以带一个参数，该参数就会被当作上一个 yield 表达式的返回值。
+        // 由于 generator.next 方法的参数表示上一个 yield 表达式的返回值，
+        // 所以在第一次使用 generator.next 方法时，传递参数是无效的。
+        result = generator.next(value)
+      } catch (error) {
+        return reject(error)
+      }
+      next(result)
+    }
+    /**
+     * Promise 失败处理的回调函数
+     * 回调函数会执行 generator.throw() ,这样可以 try catch 拦截 yield xxx 的错误
+     * @param {Any} reason 失败原因
+     */
+    function onRejected(reason) {
+      let result
+      try {
+        // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
+        // 返回带有 done 及 value 两个属性的对象。
+        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
+        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
+        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
+        result = generator.throw(reason)
+      } catch (error) {
+        return reject(error)
+      }
+      // gen.throw() 的错误被捕获后，可以继续执行下去
+      next(result)
+    }
+
+    function next(result) {
+      const value = toPromise(result.value)
+      const done = result.done
+
+      if (done) {
+        return resolve(value)
+      } else {
+        return value.then(onFullfilled, onRejected)
+      }
+    }
+  })
+}
+
+/**
+ * 考虑 yield 的其他类型，如 generator 函数
+ * 可以把这些类型适配为 Promise 就很好处理了
+ */
+function toPromise(value) {
+  if (isGerneratorFunction(value) || isGernerator(value)) {
+    // generatorExecuter 返回 Promise
+    return generatorExecuter(value)
+  } else {
+    // 字符串、对象、数组、Promise 等都转成 Promise
+    return Promise.resolve(value)
+  }
+}
+
+/**
  * 是否是 generator 函数
  */
 function isGerneratorFunction(target) {
@@ -169,343 +366,18 @@ function isGerneratorFunction(target) {
 }
 
 /**
- * 运行 generator
- * @param {GeneratorFunction} generator generator函数运行
+ * 是否是 generator
  */
-function generatorExecuter(generatorFunc) {
-  const generator = generatorFunc()
-  function recursionGeneratorNext(prevValue) {
-    const next = generator.next(prevValue)
-    let value = next.value
-    const done = next.done
-
-    if (isGerneratorFunction(value)) {
-      value = generatorExecuter(value)
-    }
-
-    if (done) {
-      return Promise.resolve(value)
-    } else {
-      // value 可能是 Promise 对象
-      return Promise.resolve(value).then(finalValue => {
-        return recursionGeneratorNext(finalValue)
-      })
-    }
+function isGernerator(target) {
+  if (Object.prototype.toString.apply(target) === '[object Generator]') {
+    return true
+  } else {
+    return false
   }
-  return recursionGeneratorNext()
 }
 ```
 
 这样就再运行 generatorExecuter(test) 就没问题了。
-
-## 考虑 yield 的类型是 Generator
-
-上面的代码执行如下的 Generator 函数是不正确的：
-
-```js
-function* aFun(value) {
-  return value
-}
-
-function* test() {
-  const a = yield aFun('a')
-  console.log(a)
-  return true
-}
-generatorExecuter(test)
-```
-
-运行上面的代码后，test 函数 console.log 输出的不是 `a`，而是 `aFun {<suspended>}`。
-
-那么我们代码需要这样处理：
-
-```js
-/**
- * 是否是 generator
- */
-function isGernerator(target) {
-  if (Object.prototype.toString.apply(target) === '[object Generator]') {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 是否是 generator 函数
- */
-function isGerneratorFunction(target) {
-  if (
-    Object.prototype.toString.apply(target) === '[object GeneratorFunction]'
-  ) {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 运行 generator
- * @param {Generator} generator generator函数运行后返回的对象
- */
-function runGernerator(generator) {
-  function recursionGeneratorNext(prevValue) {
-    const next = generator.next(prevValue)
-    let value = next.value
-    const done = next.done
-
-    if (isGernerator(value)) {
-      value = runGernerator(value)
-    } else if (isGerneratorFunction(value)) {
-      value = generatorExecuter(value)
-    }
-
-    if (done) {
-      return Promise.resolve(value)
-    } else {
-      // value 可能是 Promise 对象
-      return Promise.resolve(value).then(finalValue => {
-        return recursionGeneratorNext(finalValue)
-      })
-    }
-  }
-  return recursionGeneratorNext()
-}
-
-/**
- * generator 执行器
- * @param {Generator || GeneratorFunction} generatorFunc generator 函数或者 generator
- * @return {Promise} 返回一个 Promise 对象
- */
-function generatorExecuter(generatorFunc) {
-  let generator
-  if (isGerneratorFunction(generatorFunc)) {
-    generator = generatorFunc()
-  } else if (isGernerator(generatorFunc)) {
-    generator = generatorFunc
-  } else {
-    throw new TypeError(
-      'Expected the generatorFunc to be a GeneratorFuntion or Generator.'
-    )
-  }
-  return runGernerator(generator)
-}
-```
-这样就再运行 generatorExecuter(test) 就没问题了。
-
-## 考虑 try catch 捕获 Promise 错误
-
-如下代码，使用上面的执行器是无法 try catch 到 Promise 错误的:
-
-```js
-function* aFun() {
-  return Promise.reject('error')
-}
-
-function* test() {
-  try {
-    const a = yield aFun()
-  }catch (err) {
-    console.log('发生错误了：', err)
-  }
-  return true
-}
-generatorExecuter(test)
-```
-
-运行上面代码后，会报错 `Uncaught (in promise) error`，而不是拦截后输出 `发生错误了： error`。
-
-要改成这样才行（使用 gen.throw ）：
-
-```js 
-/**
- * 是否是 generator
- */
-function isGernerator(target) {
-  if (Object.prototype.toString.apply(target) === '[object Generator]') {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 是否是 generator 函数
- */
-function isGerneratorFunction(target) {
-  if (
-    Object.prototype.toString.apply(target) === '[object GeneratorFunction]'
-  ) {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 运行 generator
- * @param {Generator} generator generator函数运行后返回的对象
- */
-function runGernerator(generator) {
-  function recursionGeneratorNext(prevValue) {
-    const next = generator.next(prevValue)
-    let value = next.value
-    const done = next.done
-
-    if (isGernerator(value)) {
-      value = runGernerator(value)
-    } else if (isGerneratorFunction(value)) {
-      value = generatorExecuter(value)
-    }
-
-    if (done) {
-      return Promise.resolve(value).catch(err => {
-        generator.throw(err)
-      })
-    } else {
-      // value 可能是 Promise 对象
-      return Promise.resolve(value).then(finalValue => {
-        return recursionGeneratorNext(finalValue)
-      }).catch(err => {
-        generator.throw(err)
-      })
-    }
-  }
-  return recursionGeneratorNext()
-}
-
-/**
- * generator 执行器
- * @param {Generator || GeneratorFunction} generatorFunc generator 函数或者 generator
- * @return {Promise} 返回一个 Promise 对象
- */
-function generatorExecuter(generatorFunc) {
-  let generator
-  if (isGerneratorFunction(generatorFunc)) {
-    generator = generatorFunc()
-  } else if (isGernerator(generatorFunc)) {
-    generator = generatorFunc
-  } else {
-    throw new TypeError(
-      'Expected the generatorFunc to be a GeneratorFuntion or Generator.'
-    )
-  }
-  return runGernerator(generator)
-}
-```
-
-## 考虑 try catch 捕获 Generator 函数体错误
-
-如下代码，使用上面的执行器是无法 try catch 到 Promise 错误的:
-
-```js
-function* aFun() {
-  const a = 2
-  a = 3
-  return a
-}
-
-function* test() {
-  try {
-    const a = yield aFun()
-  } catch (err) {
-    console.log('发生错误了：', err)
-  }
-  return true
-}
-generatorExecuter(test)
-```
-
-运行上面代码后，会直接报错，无法直接使用 try catch 拦截。
-
-要改成这样才行（try catch next 函数的运行，然后使用 gen.throw ）：
-
-```js
-/**
- * 是否是 generator
- */
-function isGernerator(target) {
-  if (Object.prototype.toString.apply(target) === '[object Generator]') {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 是否是 generator 函数
- */
-function isGerneratorFunction(target) {
-  if (
-    Object.prototype.toString.apply(target) === '[object GeneratorFunction]'
-  ) {
-    return true
-  } else {
-    return false
-  }
-}
-
-/**
- * 运行 generator
- * @param {Generator} generator generator函数运行后返回的对象
- */
-function runGernerator(generator) {
-  function recursionGeneratorNext(prevValue) {
-    // 在这里做 try catch
-    let next
-    try {
-    	next = generator.next(prevValue)
-    } catch(err) {
-      // 不能直接 gen.throw，必须使用 promise reject 后处理
-			return Promise.reject(err).catch(err => {
-        generator.throw(err)
-      })
-    }
-    
-    let value = next.value
-    const done = next.done
-
-    if (isGernerator(value)) {
-      value = runGernerator(value)
-    } else if (isGerneratorFunction(value)) {
-      value = generatorExecuter(value)
-    }
-
-    if (done) {
-      return Promise.resolve(value).catch(err => {
-        generator.throw(err)
-      })
-    } else {
-      // value 可能是 Promise 对象
-      return Promise.resolve(value).then(finalValue => {
-        return recursionGeneratorNext(finalValue)
-      }).catch(err => {
-        generator.throw(err)
-      })
-    }
-  }
-  return recursionGeneratorNext()
-}
-
-/**
- * generator 执行器
- * @param {Generator || GeneratorFunction} generatorFunc generator 函数或者 generator
- * @return {Promise} 返回一个 Promise 对象
- */
-function generatorExecuter(generatorFunc) {
-  let generator
-  if (isGerneratorFunction(generatorFunc)) {
-    generator = generatorFunc()
-  } else if (isGernerator(generatorFunc)) {
-    generator = generatorFunc
-  } else {
-    throw new TypeError(
-      'Expected the generatorFunc to be a GeneratorFuntion or Generator.'
-    )
-  }
-  return runGernerator(generator)
-}
-```
 
 ## 最终版
 
@@ -513,13 +385,90 @@ Generator 执行器没想的那么难，花点时间就可以吃透了。
 
 ```js
 /**
- * 是否是 generator
+ * generator 执行器
+ * @param {GeneratorFunction | Generator} generatorFunc Generator 函数或者 Generator
+ * @return {Promise} 返回一个 Promise 对象
  */
-function isGernerator(target) {
-  if (Object.prototype.toString.apply(target) === '[object Generator]') {
-    return true
+function generatorExecuter(generatorFunc) {
+  if (!isGernerator(generatorFunc) && !isGerneratorFunction(generatorFunc)) {
+    throw new TypeError(
+      'Expected the generatorFunc to be a GeneratorFunction or a Generator.'
+    )
+  }
+
+  let generator = generatorFunc
+  if (isGerneratorFunction(generatorFunc)) {
+    generator = generatorFunc()
+  }
+
+  return new Promise((resolve, reject) => {
+    // 触发第一次执行下面定义的 next 函数
+    onFullfilled()
+    /**
+     * Promise 成功处理的回调函数
+     * 回调函数会执行 generator.next()
+     * @param {Any} value yield 表达式的返回值
+     */
+    function onFullfilled(value) {
+      let result
+      // next() 会一步一步的执行 generator 函数体的代码，
+      // 如果报错，我们需要拦截，然后 reject
+      try {
+        // yield 表达式本身没有返回值，或者说总是返回 undefined。
+        // generator.next 方法可以带一个参数，该参数就会被当作上一个 yield 表达式的返回值。
+        // 由于 generator.next 方法的参数表示上一个 yield 表达式的返回值，
+        // 所以在第一次使用 generator.next 方法时，传递参数是无效的。
+        result = generator.next(value)
+      } catch (error) {
+        return reject(error)
+      }
+      next(result)
+    }
+    /**
+     * Promise 失败处理的回调函数
+     * 回调函数会执行 generator.throw() ,这样可以 try catch 拦截 yield xxx 的错误
+     * @param {Any} reason 失败原因
+     */
+    function onRejected(reason) {
+      let result
+      try {
+        // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
+        // 返回带有 done 及 value 两个属性的对象。
+        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
+        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
+        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
+        result = generator.throw(reason)
+      } catch (error) {
+        return reject(error)
+      }
+      // gen.throw() 的错误被捕获后，可以继续执行下去
+      next(result)
+    }
+
+    function next(result) {
+      const value = toPromise(result.value)
+      const done = result.done
+
+      if (done) {
+        return resolve(value)
+      } else {
+        return value.then(onFullfilled, onRejected)
+      }
+    }
+  })
+}
+
+/**
+ * 考虑 yield 的其他类型，如 generator 函数
+ * 可以把这些类型适配为 Promise 就很好处理了
+ */
+function toPromise(value) {
+  if (isGerneratorFunction(value) || isGernerator(value)) {
+    // generatorExecuter 返回 Promise
+    return generatorExecuter(value)
   } else {
-    return false
+    // 字符串、对象、数组、Promise 等都转成 Promise
+    return Promise.resolve(value)
   }
 }
 
@@ -537,69 +486,16 @@ function isGerneratorFunction(target) {
 }
 
 /**
- * 运行 generator
- * @param {Generator} generator generator函数运行后返回的对象
+ * 是否是 generator
  */
-function runGernerator(generator) {
-  function recursionGeneratorNext(prevValue) {
-    // 在这里做 try catch
-    let next
-    let value
-    
-    try {
-    	next = generator.next(prevValue)
-      value = next.value
-    } catch(err) {
-      // 不能直接 gen.throw，必须使用 promise reject 后处理
-			return Promise.reject(err).catch(err => {
-        generator.throw(err)
-      }).then(a=>{
-        console.log(a,'ddddd')
-      })
-    }
-    
-    const done = next.done
-
-    if (isGernerator(value)) {
-      value = runGernerator(value)
-    } else if (isGerneratorFunction(value)) {
-      value = generatorExecuter(value)
-    }
-
-    if (done) {
-      return Promise.resolve(value).catch(err => {
-        generator.throw(err)
-      })
-    } else {
-      // value 可能是 Promise 对象
-      return Promise.resolve(value).then(finalValue => {
-        return recursionGeneratorNext(finalValue)
-      }).catch(err => {
-        generator.throw(err)
-      })
-    }
-  }
-  return recursionGeneratorNext()
-}
-
-/**
- * generator 执行器
- * @param {Generator || GeneratorFunction} generatorFunc generator 函数或者 generator
- * @return {Promise} 返回一个 Promise 对象
- */
-function generatorExecuter(generatorFunc) {
-  let generator
-  if (isGerneratorFunction(generatorFunc)) {
-    generator = generatorFunc()
-  } else if (isGernerator(generatorFunc)) {
-    generator = generatorFunc
+function isGernerator(target) {
+  if (Object.prototype.toString.apply(target) === '[object Generator]') {
+    return true
   } else {
-    throw new TypeError(
-      'Expected the generatorFunc to be a GeneratorFuntion or Generator.'
-    )
+    return false
   }
-  return runGernerator(generator)
 }
+
 ```
 
 运行例子如下，直接在谷歌 console 运行即可：
