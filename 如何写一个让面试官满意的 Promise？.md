@@ -1,14 +1,14 @@
 # 如何写一个让面试官满意的 Promise？
 
-**Promise 的实现没那么简单，也没想象中的那么难，200 行代码就可以实现一个可替代原生的 Promise。**
+**Promise 的实现没那么简单，也没想象中的那么难，200 行代码以内就可以实现一个可替代原生的 Promise。**
 
-Promise 已经是前端不可缺少的 API 方法，现在已经是无处不在。你确定已经很了解 Promise 吗？如果不是很了解，那么应该了解 Promise 的实现原理。如果你觉得你自己挺了解的，那么你自己实现过 Promise 吗？
+Promise 已经是前端不可缺少的 API，现在已经是无处不在。你确定已经很了解 Promise 吗？如果不是很了解，那么应该了解 Promise 的实现原理。如果你觉得你自己挺了解的，那么你自己实现过 Promise 吗？
 
 无论如何，了解 Promise 的实现方式，对于提升我们的前端技能都有一定的帮助。
 
 **下面的代码都是使用 ES6 语法实现的，不兼容 ES5，在最新的谷歌浏览器上运行没问题。**
 
-如果你想先直接看效果，可以看文章最后的完整版，也可以看 [github](https://github.com/xianshannan/interview)。
+如果你想先直接看效果，可以看文章最后的完整版，也可以看 [github](https://github.com/xianshannan/interview)，github 上包括了单元测试。
 
 ## 部分术语
 
@@ -38,9 +38,9 @@ Promise 已经是前端不可缺少的 API 方法，现在已经是无处不在�
 
 ## Promise 实现原理
 
-首先我们先了解下 Promise 的基本原理了，然后才能更好的实现。首先你可以看看 [Promises/A+规范](https://link.jianshu.com/?t=https%3A%2F%2Fpromisesaplus.com%2F)。
+这里是个人总结的代码实现的基本原理。
 
-然后这里总结了下代码实现的基本原理。
+首先我们先了解下 Promise 的实现的基本原理，然后才能更好的实现。首先你可以看看 [Promises/A+规范](https://link.jianshu.com/?t=https%3A%2F%2Fpromisesaplus.com%2F)。
 
 ### Promise 的三种状态
 
@@ -66,7 +66,7 @@ executor、then、catch、finally 的执行都是有各自新的生命周期。
 
 如何保持 `.then` 、`.catch`、`.finally` 获取链式调用呢？
 
-其实每个链式调用的方法返回一个新的 Promise 实例就可以解决这个问题，同时保证了每个链式方式的 Promise 的初始状态为 pending 状态，每个 then、catch、finally 都有自身的 Promise 生命周期。
+其实每个链式调用的方法返回一个新的 Promise 实例（其实这也是 Promises/A+ 规范之一）就可以解决这个问题，同时保证了每个链式方式的 Promise 的初始状态为 pending 状态，每个 then、catch、finally 都有自身的 Promise 生命周期。
 
 ```js
 Promise.prototype.then = function(onFulfilled,onReject) {
@@ -76,21 +76,38 @@ Promise.prototype.then = function(onFulfilled,onReject) {
 }
 ```
 
+**但是需要考虑断链的情况，断链后继续使用链式的话，Promise 的状态是非 pending 状态。**
+
+不断链的例子如下：
+
+```js
+new Promise(...).then(...)
+// 这种情况不属于断链
+```
+
+断链的例子如下：
+
+```js
+const a = new Promise(...)
+a.then(...)
+// 这种情况属于断链
+```
+
+所以需要考虑这两种情况。
+
 ### 异步列队
 
-这个需要了解**宏任务和微任务**，但是不是多有浏览器 JavaScript API 都提供微任务 这一类的方法。
+这个需要了解**宏任务和微任务**，但是不是多有浏览器 JavaScript API 都提供微任务这一类的方法。
 
 **所以这里先使用 setTimeout 代替**。
 
-Promise fulfilled 和 rejected 状态，可以在异步环境返回，那么 then、catch、finally 的回调就不能同步执行，需要等待 pending 状态转变为其他两个状态，才能继续执行。
+虽然**非**异步 resolve 或者 reject 的时候，不使用异步列队方式也可以实现，不过原生的 Promise 所有 then 等回调函数都是在异步列队中执行的。
 
-**所以 Promise 需要考虑同步和异步两种情况**，只有 resolve 和 reject 方法在异步环境执行的时候才会有自定义的异步执行列队。
-
-同步的链式挺好理解，那么主要的在于自定义异步列队的执行。异步列队其实也没那么难，其实就是数组的按顺序执行，但是里面的各种状态会复杂点。
+**这里注意一下，后面逐步说明的例子中，前面的一些是没使用异步列队的方式的，后面涉及到异步 resolve 或者 reject 的场景才加上去的。**
 
 ## 第一步定义好结构
 
-这里为了跟原生的 Promise 做区别，加了个前缀。
+这里为了跟原生的 Promise 做区别，加了个前缀，改为 NPromise。
 
 定义状态
 
@@ -122,7 +139,9 @@ NPromise.race = function(values){}
 
 ## 简单的 Promise
 
-第一个简单 Promsie 不考虑异步 resolve 的等情况。
+第一个简单 Promsie 不考虑异步 resolve 的等情况，**这一步只是用法像，then 的回调也不是异步的**。
+
+不着急，一步一步来。
 
 ```js
 const PENDING = 'pending'
@@ -249,7 +268,7 @@ setTimeout(() => {
 
 ## 考虑捕获错误
 
-还是先不考虑异步 resolve 的等情况。
+还是先不考虑异步 resolve 的等情况，**这一步也只是用法像，then 的回调也不是异步的**。
 
 **相对于上一步的改动点：**
 
@@ -447,6 +466,8 @@ setTimeout(() => {
 
 ## 考虑 resolved 的值是 Promise 类型
 
+还是先不考虑异步 resolve 的等情况，**这一步也只是用法像，then 的回调也不是异步的**。
+
 **相对于上一步的改动点：**
 
 - 新增 isPromise 判断方法
@@ -621,6 +642,9 @@ setTimeout(() => {
 
 **相对于上一步的改动点：**
 
+- this._onFulfilled 加上了异步处理
+- this._onRejected 加上了异步处理
+
 - 新增 this._callbackQueue，初始值为空数组
 
 - 新增 this.__runCallbackQueue 方法运行异步列队
@@ -640,6 +664,20 @@ setTimeout(() => {
 **代码实现**
 
 ```js
+// Promises/A+ 规范 https://promisesaplus.com/
+// 一个 Promise有以下几种状态:
+// pending: 初始状态，既不是成功，也不是失败状态。
+// fulfilled: 意味着操作成功完成。
+// rejected: 意味着操作失败。
+
+// pending 状态的 Promise 对象可能会变为 fulfilled
+// 状态并传递一个值给相应的状态处理方法，也可能变为失败状态（rejected）并传递失败信息。
+// 当其中任一种情况出现时，Promise 对象的 then 方法绑定的处理方法（handlers）就会被调用
+// then方法包含两个参数：onfulfilled 和 onrejected，它们都是 Function 类型。
+// 当 Promise 状态为 fulfilled 时，调用 then 的 onfulfilled 方法，
+// 当 Promise 状态为 rejected 时，调用 then 的 onrejected 方法，
+// 所以在异步操作的完成和绑定处理方法之间不存在竞争。
+
 const PENDING = 'pending'
 const FULFILLED = 'fulfilled'
 const REJECTED = 'rejected'
@@ -666,14 +704,15 @@ function isPromise(value) {
  */
 class NPromise {
   constructor(executor) {
-    // 这里有些属性变量是可以不定义的，不过提前定义一下，提高可读性
-
+    if (!isFunction(executor)) {
+      throw new TypeError('Expected the executor to be a function.')
+    }
     try {
-      // 初始化状态为 pending
+      // 初始化状态为 PENDING
       this._status = PENDING
-      // 传递给 then 的 onFulfilled 参数
+      // fullfilled 的值，也是 then 和 catch 的 return 值，都是当前执行的临时值
       this._nextValue = undefined
-      // 错误原因
+      // 当前捕捉的错误信息
       this._error = undefined
       // then、catch、finally 的异步回调列队，会依次执行
       this._callbacQueue = []
@@ -699,7 +738,7 @@ class NPromise {
   _runCallbackQueue = () => {
     if (this._callbacQueue.length > 0) {
       // resolve 或者 reject 异步运行的时候，this._callbacQueue 的 length 才会大于 0
-      this._callbacQueue.forEach((fn) => {
+      this._callbacQueue.forEach(fn => {
         fn()
       })
       this._callbacQueue = []
@@ -712,13 +751,15 @@ class NPromise {
    * 每次运行这个函数的时候需要重置 this._status = PENDING
    * @param {Any} value 操作成功传递的值
    */
-  _onFulfilled = (value) => {
-    if (this._status === PENDING) {
-      this._status = FULFILLED
-      this._nextValue = value
-      this._error = undefined
-      this._runCallbackQueue()
-    }
+  _onFulfilled = value => {
+    setTimeout(() => {
+      if (this._status === PENDING) {
+        this._status = FULFILLED
+        this._nextValue = value
+        this._error = undefined
+        this._runCallbackQueue()
+      }
+    })
   }
 
   /**
@@ -726,58 +767,66 @@ class NPromise {
    * 每次运行这个函数的时候需要重置 this._status = PENDING
    * @param {Any} reason 操作失败传递的值
    */
-  _onRejected = (reason) => {
-    if (this._status === PENDING) {
-      this._status = REJECTED
-      this._error = reason
-      this._nextValue = undefined
-      this._runCallbackQueue()
-    }
+  _onRejected = reason => {
+    setTimeout(() => {
+      if (this._status === PENDING) {
+        this._status = REJECTED
+        this._error = reason
+        this._nextValue = undefined
+        this._runCallbackQueue()
+      }
+    })
   }
 
   then(onFulfilled, onRejected) {
     return new NPromise((resolve, reject) => {
-      const handle = (reason) => {
-        function handleResolve(value) {
-          const _value = isFunction(onFulfilled) ? onFulfilled(value) : value
-          resolve(_value)
-        }
-
-        function handleReject(err) {
-          if (isFunction(onRejected)) {
-            resolve(onRejected(err))
-          } else {
-            reject(err)
+      const handle = reason => {
+        try {
+          function handleResolve(value) {
+            const _value = isFunction(onFulfilled) ? onFulfilled(value) : value
+            resolve(_value)
           }
-        }
 
-        if (this._status === FULFILLED) {
-          if (isPromise(this._nextValue)) {
-            return this._nextValue.then(handleResolve, handleReject)
-          } else {
-            return handleResolve(this._nextValue)
+          function handleReject(err) {
+            if (isFunction(onRejected)) {
+              resolve(onRejected(err))
+            } else {
+              reject(err)
+            }
           }
-        }
 
-        if (this._status === REJECTED) {
-          return handleReject(reason)
+          if (this._status === FULFILLED) {
+            if (isPromise(this._nextValue)) {
+              return this._nextValue.then(handleResolve, handleReject)
+            } else {
+              return handleResolve(this._nextValue)
+            }
+          }
+
+          if (this._status === REJECTED) {
+            return handleReject(reason)
+          }
+        } catch (err) {
+          reject(err)
         }
       }
       if (this._status === PENDING) {
-        // NPromise 的 resolve 或者 reject 在异步中执行才会执行到这一步
+        // 默认不断链的情况下，then 回电函数 Promise 的状态为 pending 状态
+        // 如 new NPromise(...).then(...) 是没断链的
+        // 但是 NPromise.resolve(...).then(...) 是断链的了，相当于
+        // var a = NPromise(...); a.then(...)
         this._callbacQueue.push(() => {
-          setTimeout(() => {
-            // 先使用 setTimeout 代替
-            // 保证状态切换为非 PENDING 状态才会执行后续的 then、catch 或者 finally 的回调函数
-            handle(this._error)
-            // error 已经传递到下一个 NPromise 了，需要重置，否则会抛出多个相同错误
-            // 配合 this._throwErrorIfNotCatch 一起使用，
-            // 保证执行到最后才抛出错误，如果没有 catch
-            this._error = undefined
-          })
+          // 先使用 setTimeout 代替
+          // 保证状态切换为非 PENDING 状态才会执行后续的 then、catch 或者 finally 的回调函数
+          handle(this._error)
+          // error 已经传递到下一个 NPromise 了，需要重置，否则会抛出多个相同错误
+          // 配合 this._throwErrorIfNotCatch 一起使用，
+          // 保证执行到最后才抛出错误，如果没有 catch
+          this._error = undefined
         })
       } else {
-        // 这里是非异步的情况
+        // 断链的情况下，then 回调函数 Promise 的状态为非 pending 状态
+        // 如 var a = NPromise(...); a.then(...) 就是断链的场景
         handle(this._error)
         // error 已经传递到下一个 NPromise 了，需要重置，否则会打印多个相同错误
         // 配合 this._throwErrorIfNotCatch 一起使用，
@@ -788,7 +837,6 @@ class NPromise {
   }
 
   catch(onRejected) {
-    // catch 其实就是 then 的无 fulfilled 处理
     return this.then(null, onRejected)
   }
 
@@ -846,24 +894,27 @@ NPromise.reject = function(reason) {
   })
 }
 
-NPromise.all = function(iterator) {
+NPromise.all = function(values) {
   return new NPromise((resolve, reject) => {
-    const ret = iterator.reduce((ret, element) => {
-      return ret.then(allValue => {
-        return NPromise.resolve(element)
-          .then(itemValue => {
-            if (!allValue) {
-              return
-            }
-            return allValue.concat(itemValue)
-          })
-          .catch(error => {
-            // 发生错误立马 reject
-            reject(error)
-          })
-      })
-    }, NPromise.resolve([]))
-    resolve(ret)
+    let ret = {}
+    let isError = false
+    values.forEach((p, index) => {
+      if (isError) {
+        return
+      }
+      NPromise.resolve(p)
+        .then(value => {
+          ret[index] = value
+          const result = Object.values(ret)
+          if (values.length === result.length) {
+            resolve(result)
+          }
+        })
+        .catch(err => {
+          isError = true
+          reject(err)
+        })
+    })
   })
 }
 
@@ -969,12 +1020,14 @@ class NPromise {
    * @param {Any} value 操作成功传递的值
    */
   _onFulfilled = value => {
-    if (this._status === PENDING) {
-      this._status = FULFILLED
-      this._nextValue = value
-      this._error = undefined
-      this._runCallbackQueue()
-    }
+    setTimeout(() => {
+      if (this._status === PENDING) {
+        this._status = FULFILLED
+        this._nextValue = value
+        this._error = undefined
+        this._runCallbackQueue()
+      }
+    })
   }
 
   /**
@@ -983,57 +1036,65 @@ class NPromise {
    * @param {Any} reason 操作失败传递的值
    */
   _onRejected = reason => {
-    if (this._status === PENDING) {
-      this._status = REJECTED
-      this._error = reason
-      this._nextValue = undefined
-      this._runCallbackQueue()
-    }
+    setTimeout(() => {
+      if (this._status === PENDING) {
+        this._status = REJECTED
+        this._error = reason
+        this._nextValue = undefined
+        this._runCallbackQueue()
+      }
+    })
   }
 
   then(onFulfilled, onRejected) {
     return new NPromise((resolve, reject) => {
       const handle = reason => {
-        function handleResolve(value) {
-          const _value = isFunction(onFulfilled) ? onFulfilled(value) : value
-          resolve(_value)
-        }
-
-        function handleReject(err) {
-          if (isFunction(onRejected)) {
-            resolve(onRejected(err))
-          } else {
-            reject(err)
+        try {
+          function handleResolve(value) {
+            const _value = isFunction(onFulfilled) ? onFulfilled(value) : value
+            resolve(_value)
           }
-        }
 
-        if (this._status === FULFILLED) {
-          if (isPromise(this._nextValue)) {
-            return this._nextValue.then(handleResolve, handleReject)
-          } else {
-            return handleResolve(this._nextValue)
+          function handleReject(err) {
+            if (isFunction(onRejected)) {
+              resolve(onRejected(err))
+            } else {
+              reject(err)
+            }
           }
-        }
 
-        if (this._status === REJECTED) {
-          return handleReject(reason)
+          if (this._status === FULFILLED) {
+            if (isPromise(this._nextValue)) {
+              return this._nextValue.then(handleResolve, handleReject)
+            } else {
+              return handleResolve(this._nextValue)
+            }
+          }
+
+          if (this._status === REJECTED) {
+            return handleReject(reason)
+          }
+        } catch (err) {
+          reject(err)
         }
       }
       if (this._status === PENDING) {
-        // NPromise 的 resolve 或者 reject 在异步中执行才会执行到这一步
+        // 默认不断链的情况下，then 回电函数 Promise 的状态为 pending 状态
+        // 如 new NPromise(...).then(...) 是没断链的
+        // 但是 NPromise.resolve(...).then(...) 是断链的了，相当于
+        // var a = NPromise(...); a.then(...)
         this._callbacQueue.push(() => {
-          setTimeout(() => {
-            // 先使用 setTimeout 代替
-            // 保证状态切换为非 PENDING 状态才会执行后续的 then、catch 或者 finally 的回调函数
-            handle(this._error)
-            // error 已经传递到下一个 NPromise 了，需要重置，否则会抛出多个相同错误
-            // 配合 this._throwErrorIfNotCatch 一起使用，
-            // 保证执行到最后才抛出错误，如果没有 catch
-            this._error = undefined
-          })
+          // 先使用 setTimeout 代替
+          // 保证状态切换为非 PENDING 状态才会执行后续的 then、catch 或者 finally 的回调函数
+          handle(this._error)
+          // error 已经传递到下一个 NPromise 了，需要重置，否则会抛出多个相同错误
+          // 配合 this._throwErrorIfNotCatch 一起使用，
+          // 保证执行到最后才抛出错误，如果没有 catch
+          this._error = undefined
         })
       } else {
-        // 这里是非异步的情况
+        // 断链的情况下，then 回调函数 Promise 的状态为非 pending 状态
+        // 如 var a = NPromise(...); a.then(...) 就是断链的场景
         handle(this._error)
         // error 已经传递到下一个 NPromise 了，需要重置，否则会打印多个相同错误
         // 配合 this._throwErrorIfNotCatch 一起使用，
@@ -1074,24 +1135,27 @@ NPromise.reject = function(reason) {
   })
 }
 
-NPromise.all = function(iterator) {
+NPromise.all = function(values) {
   return new NPromise((resolve, reject) => {
-    const ret = iterator.reduce((ret, element) => {
-      return ret.then(allValue => {
-        return NPromise.resolve(element)
-          .then(itemValue => {
-            if (!allValue) {
-              return
-            }
-            return allValue.concat(itemValue)
-          })
-          .catch(error => {
-            // 发生错误立马 reject
-            reject(error)
-          })
-      })
-    }, NPromise.resolve([]))
-    resolve(ret)
+    let ret = {}
+    let isError = false
+    values.forEach((p, index) => {
+      if (isError) {
+        return
+      }
+      NPromise.resolve(p)
+        .then(value => {
+          ret[index] = value
+          const result = Object.values(ret)
+          if (values.length === result.length) {
+            resolve(result)
+          }
+        })
+        .catch(err => {
+          isError = true
+          reject(err)
+        })
+    })
   })
 }
 
@@ -1106,5 +1170,33 @@ NPromise.race = function(values) {
 
 ## 总结
 
-经过一些测试，出了使用了 setTimeout 外，Promise 单独用法和效果上基本 99% 跟原生的一致。还有一点不一致的就是，**非异步** resolve 或者 reject 的时候，then 的回调是同步运行的，不是异步运行，而原生的是异步运行。
+经过一些测试，除了下面两点之外：
 
+- 使用了 setTimeout 的宏任务列队外替代微任务
+- 拓展方法 Promise.all 和 Promise.race 只考虑数组，不考虑迭代器。
+
+Promise 单独用法和效果上基本 100% 跟原生的一致。
+
+如果你不相信，你试试下面的代码，你会发现是有那么道理的：
+
+注意 **N**Promise 和 **Promise** 的。
+
+```js
+new NPromise((resolve) => {
+  resolve(Promise.resolve(2))
+}).then((value) => {
+  console.log(value)
+})
+```
+
+或者
+
+```js
+new Promise((resolve) => {
+  resolve(NPromise.resolve(2))
+}).then((value) => {
+  console.log(value)
+})
+```
+
+上面的结果都是返回正常的。

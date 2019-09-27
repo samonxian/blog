@@ -52,13 +52,24 @@ gen.next(nextOne.value)
 
 ### 原理三
 
-`gen.throw(exception)` 可以抛出异常，并恢复生成器的执行，返回带有 done 及 value 两个属性的对象。而且该异常通常可以通过 `try...catch` 块进行捕获。那么我们可以抛出 Promise 错误，这样就可以使用 `try catch` 拦截 Promise 的错误了。
+`gen.throw(exception)` 可以抛出异常，并恢复生成器的执行（前提需要 try catch yield 语句），返回带有 done 及 value 两个属性的对象。而且该异常可以通过 `try...catch` 块进行捕获。那么我们可以通过 gen.throw 抛出 Promise 错误，这样就可以使用 `try catch` 拦截 Promise 的错误了。
 
-不过需要注意一点：
+```js
+function* gen() {
+  let a
+  try {
+    a = yield 42
+  } catch (e) {
+    console.log('Error caught!')
+  }
+  console.log(a)
+  yield 33
+}
 
-**`gen.throw()` 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要。不过 `gen.throw()` 在异步 Promise 环境中抛出才会有返回值， 同时只要 generator 函数中 try catch yield 语句就可以捕获 `gen.throw` 出来的错误。**
-
-所以需要确保把所有 `gen.throw()` 都包装在一个 Promise 执行环境中才会生效。
+var g = gen()
+g.next() // { value: 42, done: false }
+g.throw(new Error('Something went wrong')) // "Error caught!"
+```
 
 ## 简单的执行器
 
@@ -207,16 +218,16 @@ function generatorExecuter(generatorFunc) {
     function onRejected(reason) {
       let result
       try {
+        // 这里 try catch 是捕获恢复生成器执行的时候，代码发生错误的情况
         // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
         // 返回带有 done 及 value 两个属性的对象。
-        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
-        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
-        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
         result = generator.throw(reason)
       } catch (error) {
         return reject(error)
       }
-      // gen.throw() 的错误被捕获后，可以继续执行下去
+      // gen.throw() 的错误被捕获后，可以继续执行下去，否则终止后续的运行
+      // 这可以达到同步效果
+      //（不是上面的 try catch，是使用者 try catch yield 语句）
       next(result)
     }
 
@@ -312,16 +323,16 @@ function generatorExecuter(generatorFunc) {
     function onRejected(reason) {
       let result
       try {
+        // 这里 try catch 是捕获恢复生成器执行的时候，代码发生错误的情况
         // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
         // 返回带有 done 及 value 两个属性的对象。
-        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
-        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
-        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
         result = generator.throw(reason)
       } catch (error) {
         return reject(error)
       }
-      // gen.throw() 的错误被捕获后，可以继续执行下去
+      // gen.throw() 的错误被捕获后，可以继续执行下去，否则终止后续的运行
+      // 这可以达到同步效果
+      //（不是上面的 try catch，是使用者 try catch yield 语句）
       next(result)
     }
 
@@ -432,16 +443,16 @@ function generatorExecuter(generatorFunc) {
     function onRejected(reason) {
       let result
       try {
+        // 这里 try catch 是捕获恢复生成器执行的时候，代码发生错误的情况
         // gen.throw() 方法用来向生成器抛出异常，并恢复生成器的执行，
         // 返回带有 done 及 value 两个属性的对象。
-        // gen.throw() 在同步的环境中会直接终止代码运行，无法 try catch，了解这点特别重要
-        // 不过 gen.throw() 在异步 Promise 环境中抛出才会有返回值，
-        // 同时只要 generator 函数中 try catch yield 语句就可以捕获 gen.throw 出来的错误
         result = generator.throw(reason)
       } catch (error) {
         return reject(error)
       }
-      // gen.throw() 的错误被捕获后，可以继续执行下去
+      // gen.throw() 的错误被捕获后，可以继续执行下去，否则终止后续的运行
+      // 这可以达到同步效果
+      //（不是上面的 try catch，是使用者 try catch yield 语句）
       next(result)
     }
 
